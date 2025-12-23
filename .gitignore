@@ -1,0 +1,19 @@
+# Python virtual environment
+venv/
+
+# Large model files
+*.tflite
+
+# Video files
+*.mov
+*.mp4
+*.avi
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
