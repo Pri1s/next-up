@@ -3,6 +3,7 @@ venv/
 
 # Large model files
 *.tflite
+*.task
 
 # Video files
 *.mov
