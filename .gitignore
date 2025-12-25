@@ -2,6 +2,7 @@
 venv/
 
 # Large model files
+models/
 *.tflite
 *.task
 
