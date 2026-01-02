@@ -10,6 +10,9 @@ from trackers.ball_tracker import BallTracker
 from processors.data_cleaner import DataCleaner
 from processors.normalizer import CoordinateNormalizer
 from processors.cycle_detector import CycleDetector
+from processors.contact_labeler import ContactLabeler
+from processors.cycle_metrics import CycleMetrics
+from processors.session_aggregator import SessionAggregator
 from visualizers.frame_visualizer import FrameVisualizer
 from utils.video_utils import apply_orange_mask
 
@@ -47,6 +50,12 @@ class VideoProcessor:
         self.data_cleaner = DataCleaner(config.max_velocity)
         self.normalizer = CoordinateNormalizer()
         self.cycle_detector = CycleDetector(config.min_cycle_duration)
+        self.contact_labeler = ContactLabeler(
+            k=config.contact_threshold_k,
+            min_window_frames=config.min_contact_window_frames
+        )
+        self.cycle_metrics = None
+        self.session_aggregator = SessionAggregator()
         self.visualizer = FrameVisualizer()
         self.frame_data_list: list[dict] = []
     
@@ -211,12 +220,60 @@ class VideoProcessor:
             self.frame_data_list = self.data_cleaner.clean(self.frame_data_list)
             
             normalized_data_list = self.normalizer.normalize(self.frame_data_list)
-            
-            dribble_cycles = self.cycle_detector.detect_cycles(normalized_data_list, fps)
-            
+            valid_frames = [frame for frame in normalized_data_list if frame is not None]
+
+            labeled_frames, shoulder_width_session = self.contact_labeler.label_frames(
+                valid_frames
+            )
+            d_thr = self.config.contact_threshold_k * shoulder_width_session
+            self.cycle_metrics = CycleMetrics(
+                d_thr=d_thr,
+                delta=self.config.dominant_hand_delta,
+                min_window_frames=self.config.min_contact_window_frames
+            )
+
+            dribble_cycles = self.cycle_detector.detect_cycles(valid_frames, fps)
+
+            labeled_by_frame = {frame.frame_index: frame for frame in labeled_frames}
+            cycles = []
+            for cycle_id, cycle_frames in enumerate(dribble_cycles):
+                labeled_cycle_frames = [
+                    labeled_by_frame[frame["frame_index"]]
+                    for frame in cycle_frames
+                    if frame["frame_index"] in labeled_by_frame
+                ]
+                if labeled_cycle_frames:
+                    cycles.append(
+                        self.cycle_metrics.compute_cycle_metrics(
+                            labeled_cycle_frames, cycle_id
+                        )
+                    )
+
+            summary = self.session_aggregator.compute_session_summary(
+                cycles=cycles,
+                total_frames=len(self.frame_data_list),
+                valid_frames=len(valid_frames),
+                shoulder_width_session=shoulder_width_session,
+                d_thr=d_thr
+            )
+
             print("-" * 50)
-            print(f"Final normalized dataset: {sum(1 for x in normalized_data_list if x is not None)} valid frames")
+            print(
+                f"Final normalized dataset: {len(valid_frames)} valid frames"
+            )
             print(f"Detected {len(dribble_cycles)} complete dribble cycles")
+            print("-" * 50)
+            print("Session Summary:")
+            print(f"  Total cycles: {len(summary.cycles)}")
+            print(f"  Avg duration: {summary.duration_mean:.1f}ms")
+            print(f"  Duration variance: {summary.duration_variance:.2f}")
+            print(f"  Max height mean: {summary.max_height_mean:.3f}")
+            print(f"  Controlled time ratio mean: {summary.controlled_time_ratio_mean:.3f}")
+            print(f"  Control deviation mean: {summary.control_deviation_mean:.4f}")
+            print(f"  Crossovers: {summary.crossovers_count}")
+            print(
+                f"  Hand ratios (L/R): {summary.left_hand_ratio:.2f} / {summary.right_hand_ratio:.2f}"
+            )
             print("-" * 50)
 
 

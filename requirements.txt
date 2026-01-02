@@ -1,0 +1,5 @@
+# Project requirements for dribble cycle metrics analysis
+numpy
+scipy
+opencv-python
+mediapipe

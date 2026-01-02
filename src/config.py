@@ -14,7 +14,10 @@ class Config:
         reference_video_path: Path to the reference video file.
         detect_every_n_frames: Number of frames between object detections.
         max_velocity: Maximum pixels the ball can move per frame.
-        min_cycle_duration: Minimum frames between dribble cycle peaks.
+        min_cycle_duration: Minimum frames between dribble cycle troughs.
+        contact_threshold_k: Control threshold multiplier for hand contact.
+        dominant_hand_delta: Margin threshold for dominant hand detection.
+        min_contact_window_frames: Minimum frames for meaningful contact.
         detection_score_threshold: Minimum confidence score for object detection.
         detection_max_results: Maximum number of detection results.
         pose_detection_confidence: Minimum confidence for pose detection.
@@ -36,6 +39,15 @@ class Config:
     detect_every_n_frames: int = 10
     max_velocity: int = 100
     min_cycle_duration: int = 10
+
+    # Control threshold: d_thr = k * shoulder_width_session
+    contact_threshold_k: float = 0.5
+
+    # Dominant hand margin
+    dominant_hand_delta: float = 0.1
+
+    # Minimum frames for meaningful contact window
+    min_contact_window_frames: int = 3
     
     # Object detection parameters
     detection_score_threshold: float = 0.3

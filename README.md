@@ -12,12 +12,20 @@ src/
 ├── detectors/             # Detection components
 │   ├── ball_detector.py   # MediaPipe ball detection
 │   └── pose_detector.py   # MediaPipe pose detection
+├── models/                # Data models for metrics
+│   ├── labeled_frame.py   # Per-frame contact labeling
+│   ├── contact_event.py   # Contact window grouping
+│   ├── cycle.py           # Per-cycle metrics container
+│   └── session_summary.py # Session-level aggregates
 ├── trackers/              # Tracking components
 │   └── ball_tracker.py    # OpenCV CSRT tracker
 ├── processors/            # Data processing components
 │   ├── data_cleaner.py    # Outlier detection & interpolation
 │   ├── normalizer.py      # Coordinate normalization
-│   └── cycle_detector.py  # Dribble cycle detection
+│   ├── cycle_detector.py  # Dribble cycle detection
+│   ├── contact_labeler.py # Per-frame hand contact labeling
+│   ├── cycle_metrics.py   # Per-cycle metrics computation
+│   └── session_aggregator.py # Session-level metrics aggregation
 ├── visualizers/           # Visualization components
 │   └── frame_visualizer.py # Frame drawing utilities
 ├── utils/                 # Utility functions
@@ -56,7 +64,16 @@ python main.py
 ### Processors (`src/processors/`)
 - `DataCleaner`: Velocity-based outlier detection and linear interpolation
 - `CoordinateNormalizer`: Body-relative coordinate transformation
-- `CycleDetector`: Peak-based dribble cycle segmentation
+- `CycleDetector`: Trough-based dribble cycle segmentation
+- `ContactLabeler`: Hand contact labeling with control threshold
+- `CycleMetrics`: Per-cycle timing, height, hand, and control metrics
+- `SessionAggregator`: Session-level metrics aggregation
+
+### Models (`src/models/`)
+- `LabeledFrame`: Normalized frame with contact labels and distances
+- `ContactEvent`: Window of continuous hand contact
+- `Cycle`: Per-cycle metrics container
+- `SessionSummary`: Session-level aggregates
 
 ### Visualizers (`src/visualizers/`)
 - `FrameVisualizer`: All drawing functions for video visualization
