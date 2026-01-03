@@ -26,13 +26,18 @@ Add these to your `Config` instance or modify `src/config.py`:
 
 ```python
 # Control threshold: d_thr = k * shoulder_width_session
-contact_threshold_k: float = 0.5
+# Increased to allow more L/R labels
+contact_threshold_k: float = 1.0
 
 # Dominant hand margin (10% = 0.1)
 dominant_hand_delta: float = 0.1
 
 # Minimum frames for meaningful contact window
-min_contact_window_frames: int = 3
+# Lowered to 2 so short but real hand contacts per bounce aren't discarded
+min_contact_window_frames: int = 2
+
+# Minimum frames between troughs - lowered to allow fast bounces as separate cycles
+min_cycle_duration: int = 3
 ```
 
 ## Basic Usage
@@ -94,15 +99,15 @@ for cycle in summary.cycles:
     print(f"  Duration: {cycle.duration_ms:.1f}ms")
     print(f"  Height range: {cycle.height_range:.3f}")
     print(f"  Controlled time: {cycle.controlled_time_ratio:.1%}")
+    print(f"  Cycle hand: {cycle.cycle_hand or 'unknown'}")
     print(f"  Dominant hand: {cycle.dominant_hand or 'ambiguous'}")
-    print(f"  Is crossover: {cycle.is_crossover}")
     print()
 
 # Session summary
 print("Session Summary:")
 print(f"  Total cycles: {len(summary.cycles)}")
 print(f"  Avg duration: {summary.duration_mean:.1f}ms (±{summary.duration_variance**0.5:.1f})")
-print(f"  Crossovers: {summary.crossovers_count}")
+print(f"  Crossovers (cycle-to-cycle): {summary.crossovers_count}")
 print(f"  Left hand ratio: {summary.left_hand_ratio:.1%}")
 print(f"  Right hand ratio: {summary.right_hand_ratio:.1%}")
 print(f"  Control deviation: {summary.control_deviation_mean:.4f}")
@@ -112,44 +117,45 @@ print(f"  Control deviation: {summary.control_deviation_mean:.4f}")
 
 ### Cycle Object
 
-| Field                          | Type   | Description                               |
-| ------------------------------ | ------ | ----------------------------------------- |
-| `cycle_id`                     | int    | Unique identifier                         |
-| `duration_ms`                  | float  | Cycle length in milliseconds              |
-| `max_height`                   | float  | Highest ball position (min ball_y)        |
-| `min_height`                   | float  | Lowest ball position (max ball_y, bounce) |
-| `height_range`                 | float  | Vertical excursion                        |
-| `contact_time_fraction_left`   | float  | % time with left hand contact             |
-| `contact_time_fraction_right`  | float  | % time with right hand contact            |
-| `controlled_time_ratio`        | float  | % time with any hand contact              |
-| `start_hand`                   | str?   | First hand to contact ('L', 'R', None)    |
-| `end_hand`                     | str?   | Last hand to contact ('L', 'R', None)     |
-| `is_crossover`                 | bool?  | True if hand changed during cycle         |
-| `dominant_hand`                | str?   | Hand with >10% more contact time          |
-| `control_deviation_in_control` | float? | Avg ball-wrist distance during contact    |
+| Field                          | Type   | Description                                     |
+| ------------------------------ | ------ | ----------------------------------------------- |
+| `cycle_id`                     | int    | Unique identifier                               |
+| `duration_ms`                  | float  | Cycle length in milliseconds                    |
+| `max_height`                   | float  | Highest ball position (min ball_y)              |
+| `min_height`                   | float  | Lowest ball position (max ball_y, bounce)       |
+| `height_range`                 | float  | Vertical excursion                              |
+| `contact_time_fraction_left`   | float  | % time with left hand contact                   |
+| `contact_time_fraction_right`  | float  | % time with right hand contact                  |
+| `controlled_time_ratio`        | float  | % time with any hand contact                    |
+| `start_hand`                   | str?   | First hand to contact ('L', 'R', None)          |
+| `end_hand`                     | str?   | Last hand to contact ('L', 'R', None)           |
+| `is_crossover`                 | bool?  | Deprecated: True if start_hand != end_hand      |
+| `dominant_hand`                | str?   | Hand with >10% more contact time fraction       |
+| `cycle_hand`                   | str?   | Main hand for this bounce (by contact duration) |
+| `control_deviation_in_control` | float? | Avg ball-wrist distance during contact          |
 
 ### SessionSummary Object
 
-| Field                    | Type  | Description                           |
-| ------------------------ | ----- | ------------------------------------- |
-| `cycles`                 | list  | All Cycle objects                     |
-| `duration_mean`          | float | Average cycle duration                |
-| `duration_variance`      | float | Variance of cycle durations           |
-| `crossovers_count`       | int   | Number of crossover cycles            |
-| `left_hand_ratio`        | float | % of non-crossover cycles using left  |
-| `right_hand_ratio`       | float | % of non-crossover cycles using right |
-| `control_deviation_mean` | float | Average control deviation             |
+| Field                    | Type  | Description                                         |
+| ------------------------ | ----- | --------------------------------------------------- |
+| `cycles`                 | list  | All Cycle objects                                   |
+| `duration_mean`          | float | Average cycle duration                              |
+| `duration_variance`      | float | Variance of cycle durations                         |
+| `crossovers_count`       | int   | Number of cycle-to-cycle hand transitions           |
+| `left_hand_ratio`        | float | % of cycles with cycle_hand='L' (among known hands) |
+| `right_hand_ratio`       | float | % of cycles with cycle_hand='R' (among known hands) |
+| `control_deviation_mean` | float | Average control deviation                           |
 
 ## Tuning Parameters
 
 If metrics seem off, adjust these values:
 
-| Parameter                   | Default | Adjust If...                          |
-| --------------------------- | ------- | ------------------------------------- |
-| `contact_threshold_k`       | 0.5     | Contact windows too short/long        |
-| `dominant_hand_delta`       | 0.1     | Too many/few ambiguous dominant hands |
-| `min_contact_window_frames` | 3       | Contact events seem noisy             |
-| `min_cycle_duration`        | 10      | Cycles split incorrectly              |
+| Parameter                   | Default | Adjust If...                                                       |
+| --------------------------- | ------- | ------------------------------------------------------------------ |
+| `contact_threshold_k`       | 1.0     | Contact windows too short/long (increase if too few L/R labels)    |
+| `dominant_hand_delta`       | 0.1     | Too many/few ambiguous dominant hands                              |
+| `min_contact_window_frames` | 2       | Contact events seem noisy (increase to filter more)                |
+| `min_cycle_duration`        | 3       | Cycles split incorrectly (increase if jitter causes false troughs) |
 
 ## Testing
 

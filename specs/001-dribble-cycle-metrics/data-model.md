@@ -204,10 +204,13 @@ class Cycle:
     controlled_time_ratio: float        # [0, 1]
 
     # Hand fields (FR-022)
-    start_hand: Optional[str]     # 'L', 'R', or None
-    end_hand: Optional[str]       # 'L', 'R', or None
-    is_crossover: Optional[bool]  # True if start_hand != end_hand
+    start_hand: Optional[str]     # 'L', 'R', or None (optional descriptor)
+    end_hand: Optional[str]       # 'L', 'R', or None (optional descriptor)
+    is_crossover: Optional[bool]  # True if start_hand != end_hand (deprecated; see cycle_hand)
     dominant_hand: Optional[str]  # 'L', 'R', or None (ambiguous)
+
+    # Per-cycle main hand for bounce-to-bounce crossover detection
+    cycle_hand: Optional[str]     # 'L', 'R', or None; hand with most contact time this cycle
 
     # Crossover timing (FR-023)
     switch_time_norm: Optional[float]  # [0, 1] if crossover
@@ -263,12 +266,14 @@ class SessionSummary:
     control_deviation_variance: float
 
     # Crossover count (FR-026)
+    # Number of hand-change transitions between consecutive cycles with known cycle_hand
     crossovers_count: int
 
     # Hand ratios (FR-027)
+    # Computed from cycle_hand across all cycles with known hand
     left_hand_ratio: float      # [0, 1]
     right_hand_ratio: float     # [0, 1]
-    hand_ratio_sample_size: int # cycles used for ratio calculation
+    hand_ratio_sample_size: int # cycles with known cycle_hand used for ratio calculation
 
     # Metadata
     shoulder_width_session: float  # Used for d_thr computation
@@ -279,13 +284,14 @@ class SessionSummary:
 
 - `cycles` may be empty (if no cycles detected)
 - `left_hand_ratio + right_hand_ratio ≈ 1.0` (within floating-point tolerance)
-- `crossovers_count <= len(cycles)`
+- `crossovers_count <= len(cycles) - 1` (max transitions between N cycles is N-1)
 - All variance values >= 0
 
 **Derivation:**
 
 - Created by `SessionAggregator` from list of `Cycle`
-- Hand ratios computed from non-crossover cycles only
+- `crossovers_count` computed by counting hand-change transitions between consecutive cycles with known `cycle_hand`
+- Hand ratios computed from `cycle_hand` across all cycles with known hand
 - Statistics exclude cycles with missing values for that metric
 
 ---

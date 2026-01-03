@@ -9,6 +9,9 @@ from models.session_summary import SessionSummary
 class SessionAggregator:
     """Aggregates cycle metrics into session-level statistics."""
 
+    def __init__(self, crossover_hand_gap_tolerance: int = 0):
+        self.crossover_hand_gap_tolerance = max(0, crossover_hand_gap_tolerance)
+
     @staticmethod
     def _stats(values: list[float]) -> tuple[float, float]:
         if not values:
@@ -16,6 +19,62 @@ class SessionAggregator:
         if len(values) == 1:
             return values[0], 0.0
         return mean(values), pvariance(values)
+
+    def _count_crossovers(self, cycles: list[Cycle]) -> int:
+        """
+        Count crossover transitions between consecutive cycles.
+        
+        A crossover is when the cycle_hand changes from one cycle to the next,
+        and both cycles have a known (non-None) cycle_hand.
+        
+        Args:
+            cycles: List of cycles in order.
+            
+        Returns:
+            Number of hand-change transitions between consecutive cycles.
+        """
+        crossovers = 0
+        i = 0
+        while i < len(cycles) - 1:
+            hand_j = cycles[i].cycle_hand
+            if hand_j is None:
+                i += 1
+                continue
+            next_idx = None
+            for offset in range(1, self.crossover_hand_gap_tolerance + 2):
+                j = i + offset
+                if j >= len(cycles):
+                    break
+                hand_j1 = cycles[j].cycle_hand
+                if hand_j1 is not None:
+                    next_idx = j
+                    if hand_j1 != hand_j:
+                        crossovers += 1
+                    break
+            if next_idx is None:
+                i += 1
+            else:
+                i = next_idx
+        return crossovers
+
+    @staticmethod
+    def _compute_hand_ratios(cycles: list[Cycle]) -> tuple[float, float, int]:
+        """
+        Compute left/right hand ratios from cycle_hand across all cycles.
+        
+        Args:
+            cycles: List of cycles.
+            
+        Returns:
+            Tuple of (left_ratio, right_ratio, sample_size).
+        """
+        hand_samples = [c.cycle_hand for c in cycles if c.cycle_hand in ("L", "R")]
+        sample_size = len(hand_samples)
+        if sample_size == 0:
+            return 0.0, 0.0, 0
+        left_count = sum(1 for h in hand_samples if h == "L")
+        right_count = sample_size - left_count
+        return left_count / sample_size, right_count / sample_size, sample_size
 
     def compute_session_summary(
         self,
@@ -39,24 +98,11 @@ class SessionAggregator:
         controlled_mean, controlled_variance = self._stats(controlled_values)
         control_mean, control_variance = self._stats(control_deviation_values)
 
-        crossovers_count = sum(1 for c in cycles if c.is_crossover is True)
+        # Crossovers now counted as hand-change transitions between consecutive cycles
+        crossovers_count = self._count_crossovers(cycles)
 
-        hand_samples = []
-        for c in cycles:
-            if c.is_crossover is False:
-                hand = c.dominant_hand or c.end_hand
-                if hand in ("L", "R"):
-                    hand_samples.append(hand)
-
-        left_count = sum(1 for hand in hand_samples if hand == "L")
-        right_count = sum(1 for hand in hand_samples if hand == "R")
-        sample_size = len(hand_samples)
-        if sample_size > 0:
-            left_ratio = left_count / sample_size
-            right_ratio = right_count / sample_size
-        else:
-            left_ratio = 0.0
-            right_ratio = 0.0
+        # Hand ratios computed from cycle_hand across all cycles with known hand
+        left_ratio, right_ratio, sample_size = self._compute_hand_ratios(cycles)
 
         return SessionSummary(
             cycles=cycles,

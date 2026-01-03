@@ -14,7 +14,12 @@ from processors.contact_labeler import ContactLabeler
 from processors.cycle_metrics import CycleMetrics
 from processors.session_aggregator import SessionAggregator
 from visualizers.frame_visualizer import FrameVisualizer
-from utils.video_utils import apply_orange_mask
+from utils.video_utils import (
+    apply_orange_mask,
+    bbox_area_ratio,
+    bbox_orange_ratio,
+    bbox_iou
+)
 
 
 class VideoProcessor:
@@ -55,9 +60,62 @@ class VideoProcessor:
             min_window_frames=config.min_contact_window_frames
         )
         self.cycle_metrics = None
-        self.session_aggregator = SessionAggregator()
+        self.session_aggregator = SessionAggregator(
+            crossover_hand_gap_tolerance=config.crossover_hand_gap_tolerance
+        )
         self.visualizer = FrameVisualizer()
         self.frame_data_list: list[dict] = []
+        self.recent_ball_centers: list[tuple[int, int]] = []
+        self.force_detect_frames: int = 0
+        self.grace_frames_left: int = 0
+        self.last_good_ball_center: Optional[tuple[int, int]] = None
+
+    def _log_rejection(
+        self,
+        frame_index: int,
+        timestamp_ms: int,
+        reason: str
+    ) -> None:
+        print(f"[REJECT] frame={frame_index} ts_ms={timestamp_ms} reason={reason}")
+
+    def _bbox_passes_checks(
+        self,
+        frame: cv2.Mat,
+        masked_frame: cv2.Mat,
+        bbox: tuple[int, int, int, int]
+    ) -> bool:
+        area_ratio = bbox_area_ratio(bbox, frame.shape)
+        if (
+            area_ratio < self.config.min_ball_area_ratio or
+            area_ratio > self.config.max_ball_area_ratio
+        ):
+            return False
+        orange_ratio = bbox_orange_ratio(masked_frame, bbox)
+        return orange_ratio >= self.config.min_orange_ratio
+
+    def _passes_motion_gate(self, ball_center: tuple[int, int]) -> bool:
+        if len(self.recent_ball_centers) < 2:
+            return True
+        prev = self.recent_ball_centers[-1]
+        prev_prev = self.recent_ball_centers[-2]
+        v1x = prev[0] - prev_prev[0]
+        v1y = prev[1] - prev_prev[1]
+        v2x = ball_center[0] - prev[0]
+        v2y = ball_center[1] - prev[1]
+        accel = ((v2x - v1x) ** 2 + (v2y - v1y) ** 2) ** 0.5
+        return accel <= self.config.max_track_acceleration
+
+    def _use_grace_center(self) -> Optional[tuple[int, int]]:
+        if self.config.tracking_grace_frames <= 0:
+            return None
+        if self.last_good_ball_center is None:
+            return None
+        if self.grace_frames_left <= 0:
+            self.grace_frames_left = self.config.tracking_grace_frames
+        if self.grace_frames_left <= 0:
+            return None
+        self.grace_frames_left -= 1
+        return self.last_good_ball_center
     
     def _process_frame(
         self, 
@@ -93,17 +151,30 @@ class VideoProcessor:
             not self.ball_tracker.is_active() or
             frames_since_detection >= self.config.detect_every_n_frames
         )
+        if self.force_detect_frames > 0:
+            should_detect = True
+            self.force_detect_frames -= 1
         
         if should_detect:
             bbox = self.ball_detector.detect(original_frame, timestamp_ms)
+            if bbox and not self._bbox_passes_checks(original_frame, masked_frame, bbox):
+                self._log_rejection(frame_index, timestamp_ms, "detect_bbox_checks")
+                bbox = None
             
             if bbox:
+                if self.ball_tracker.is_active() and self.ball_tracker.last_bbox:
+                    iou = bbox_iou(bbox, self.ball_tracker.last_bbox)
+                    if iou < self.config.min_detect_track_iou:
+                        self.force_detect_frames = max(
+                            self.force_detect_frames, self.config.force_detect_frames
+                        )
+                        method_used = "detection_reinit"
                 x, y, w, h = bbox
                 ball_center = (x + w // 2, y + h // 2)
                 
                 self.ball_tracker.initialize(masked_frame, bbox)
                 frames_since_detection = 0
-                method_used = "detection"
+                method_used = method_used or "detection"
                 
                 self.visualizer.draw_bounding_box(
                     original_frame, bbox, (0, 255, 0), "DETECT"
@@ -111,6 +182,9 @@ class VideoProcessor:
                 
             elif self.ball_tracker.is_active():
                 bbox = self.ball_tracker.update(masked_frame)
+                if bbox and not self._bbox_passes_checks(original_frame, masked_frame, bbox):
+                    self._log_rejection(frame_index, timestamp_ms, "tracking_fallback_bbox_checks")
+                    bbox = None
                 
                 if bbox:
                     x, y, w, h = bbox
@@ -122,12 +196,25 @@ class VideoProcessor:
                         original_frame, bbox, (0, 165, 255), "TRACK (FB)"
                     )
                 else:
-                    method_used = "lost"
+                    self.force_detect_frames = max(
+                        self.force_detect_frames, self.config.force_detect_frames
+                    )
+                    grace_center = self._use_grace_center()
+                    if grace_center:
+                        ball_center = grace_center
+                        frames_since_detection += 1
+                        method_used = "tracking_grace"
+                    else:
+                        self.ball_tracker.reset()
+                        method_used = "lost"
             else:
                 method_used = "lost"
         
         else:
             bbox = self.ball_tracker.update(masked_frame)
+            if bbox and not self._bbox_passes_checks(original_frame, masked_frame, bbox):
+                self._log_rejection(frame_index, timestamp_ms, "tracking_bbox_checks")
+                bbox = None
             
             if bbox:
                 x, y, w, h = bbox
@@ -139,12 +226,43 @@ class VideoProcessor:
                     original_frame, bbox, (255, 0, 0), "TRACK"
                 )
             else:
-                self.ball_tracker.reset()
-                frames_since_detection = self.config.detect_every_n_frames
-                method_used = "lost"
+                self.force_detect_frames = max(
+                    self.force_detect_frames, self.config.force_detect_frames
+                )
+                grace_center = self._use_grace_center()
+                if grace_center:
+                    ball_center = grace_center
+                    frames_since_detection += 1
+                    method_used = "tracking_grace"
+                else:
+                    self.ball_tracker.reset()
+                    frames_since_detection = self.config.detect_every_n_frames
+                    method_used = "lost"
+
+        if ball_center and method_used in {"tracking", "tracking_fallback"}:
+            if not self._passes_motion_gate(ball_center):
+                self._log_rejection(frame_index, timestamp_ms, "tracking_motion_gate")
+                self.force_detect_frames = max(
+                    self.force_detect_frames, self.config.force_detect_frames
+                )
+                grace_center = self._use_grace_center()
+                if grace_center:
+                    ball_center = grace_center
+                    method_used = "tracking_grace"
+                else:
+                    ball_center = None
+                    self.ball_tracker.reset()
+                    frames_since_detection = self.config.detect_every_n_frames
+                    method_used = "rejected_motion"
         
         if ball_center:
             self.visualizer.draw_ball_center(original_frame, ball_center)
+            if method_used != "tracking_grace":
+                self.last_good_ball_center = ball_center
+                self.grace_frames_left = 0
+                self.recent_ball_centers.append(ball_center)
+                if len(self.recent_ball_centers) > 3:
+                    self.recent_ball_centers.pop(0)
         else:
             self.visualizer.draw_ball_lost(original_frame)
         

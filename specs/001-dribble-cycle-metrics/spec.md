@@ -121,10 +121,11 @@ A player wants to know how well they maintain control of the ball during dribbli
   - `contact_time_fraction_right` = (time labeled R) / duration
   - `controlled_time_ratio` = (time labeled L or R) / duration
 - **FR-022**: System MUST determine per-cycle hand fields:
-  - `start_hand`: first meaningful contact window (minimum 3 consecutive frames) near cycle start
-  - `end_hand`: last meaningful contact window (minimum 3 consecutive frames) near cycle end
-  - `is_crossover`: True if `start_hand != end_hand` (when both known)
+  - `start_hand`: first meaningful contact window (minimum 2 consecutive frames, configurable) near cycle start. _Note: This is an optional descriptor for debugging/visualization; not used for crossover detection._
+  - `end_hand`: last meaningful contact window (minimum 2 consecutive frames, configurable) near cycle end. _Note: This is an optional descriptor for debugging/visualization; not used for crossover detection._
+  - `is_crossover`: True if `start_hand != end_hand` (when both known). _Deprecated: Retained for backward compatibility. Primary crossover detection now occurs at session level via `cycle_hand` transitions (see FR-026)._
   - `dominant_hand`: based on contact fractions with margin threshold `delta = 0.1` (10%, configurable). A hand is dominant if its contact fraction exceeds the other by at least delta. _Note: If dominant hand classification appears inaccurate during testing, adjust delta—lower values are more sensitive, higher values require stronger preference._
+  - `cycle_hand`: main hand for this dribble cycle, determined by summing total contact event durations for L vs R. The hand with more total contact time is the `cycle_hand`. This field is used for cycle-to-cycle crossover detection at session level.
 - **FR-023**: System SHOULD compute `switch_time_norm` for crossover cycles as the normalized midpoint between end of last start-hand window and start of first end-hand window.
 - **FR-024**: System MUST compute per-cycle control deviation metrics:
   - `control_deviation_overall`: mean of `d_min` over all frames with wrists present
@@ -133,8 +134,8 @@ A player wants to know how well they maintain control of the ball during dribbli
 #### Session-Level Aggregates
 
 - **FR-025**: System MUST compute mean and variance across all cycles for: `duration`, `max_height` (or `avg_height`), `controlled_time_ratio`, `control_deviation_in_control`.
-- **FR-026**: System MUST count `crossovers_count` as the number of cycles with `is_crossover == True`.
-- **FR-027**: System MUST compute `left_hand_ratio` and `right_hand_ratio` using non-crossover cycles where `dominant_hand` (fallback to `end_hand`) is known, excluding unknown values.
+- **FR-026**: System MUST count `crossovers_count` as the number of transitions between consecutive cycles where `cycle_hand` changes and both cycles have a known (non-None) `cycle_hand`. _Note: This replaces the previous definition based on per-cycle `is_crossover`. Crossovers are now detected at session level by comparing adjacent cycle hands._
+- **FR-027**: System MUST compute `left_hand_ratio` and `right_hand_ratio` using `cycle_hand` across all cycles with known hand, excluding cycles where `cycle_hand` is None.
 
 ### Key Entities
 
@@ -144,7 +145,7 @@ A player wants to know how well they maintain control of the ball during dribbli
 
 - **ContactEvent**: A continuous window of frames with the same hand contact. Contains `hand`, `start_frame_index`, `end_frame_index`, `t_start_ms`, `t_end_ms`, optional `t_norm_start`, `t_norm_end`.
 
-- **Cycle**: A complete dribble cycle from trough to trough. Contains `cycle_id`, timing metrics, ball height metrics, contact metrics, hand fields, control deviation metrics, and list of `contact_events`.
+- **Cycle**: A complete dribble cycle from trough to trough. Contains `cycle_id`, timing metrics, ball height metrics, contact metrics, hand fields (including `cycle_hand`), control deviation metrics, and list of `contact_events`.
 
 - **SessionSummary**: Aggregate statistics across all cycles. Contains means, variances, counts, and ratios as specified in FR-025 through FR-027.
 

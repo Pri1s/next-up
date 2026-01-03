@@ -135,7 +135,19 @@ class CycleMetrics:
         contact_events: list[ContactEvent],
         contact_time_fraction_left: float,
         contact_time_fraction_right: float,
-    ) -> tuple[Optional[str], Optional[str], Optional[bool], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[bool], Optional[str], Optional[str]]:
+        """
+        Compute hand-related fields for a cycle.
+        
+        Returns:
+            Tuple of (start_hand, end_hand, is_crossover, dominant_hand, cycle_hand)
+            
+            - start_hand/end_hand: First/last meaningful contact window (kept for backward compat)
+            - is_crossover: True if start_hand != end_hand (deprecated semantics; crossovers
+              are now detected at session level via cycle_hand transitions)
+            - dominant_hand: Hand with contact fraction exceeding other by delta margin
+            - cycle_hand: Main hand for this bounce based on total contact event durations
+        """
         meaningful_events = [
             event for event in contact_events
             if event.frame_count >= self.min_window_frames
@@ -143,17 +155,42 @@ class CycleMetrics:
         start_hand = meaningful_events[0].hand if meaningful_events else None
         end_hand = meaningful_events[-1].hand if meaningful_events else None
 
+        # Legacy is_crossover (within-cycle); kept for backward compatibility
         is_crossover = None
         if start_hand is not None and end_hand is not None:
             is_crossover = start_hand != end_hand
 
+        # dominant_hand based on contact time fractions with delta margin
         dominant_hand = None
         if contact_time_fraction_left >= contact_time_fraction_right + self.delta:
             dominant_hand = "L"
         elif contact_time_fraction_right >= contact_time_fraction_left + self.delta:
             dominant_hand = "R"
 
-        return start_hand, end_hand, is_crossover, dominant_hand
+        # cycle_hand: main hand for this bounce based on total contact event durations
+        # Sum durations of all L vs R ContactEvents
+        left_duration_ms = sum(
+            e.duration_ms for e in contact_events if e.hand == "L"
+        )
+        right_duration_ms = sum(
+            e.duration_ms for e in contact_events if e.hand == "R"
+        )
+        
+        cycle_hand = None
+        if left_duration_ms > 0 or right_duration_ms > 0:
+            if left_duration_ms >= right_duration_ms + self.delta * (left_duration_ms + right_duration_ms):
+                cycle_hand = "L"
+            elif right_duration_ms >= left_duration_ms + self.delta * (left_duration_ms + right_duration_ms):
+                cycle_hand = "R"
+            else:
+                # Close call: pick whichever is larger, or None if both zero
+                if left_duration_ms > right_duration_ms:
+                    cycle_hand = "L"
+                elif right_duration_ms > left_duration_ms:
+                    cycle_hand = "R"
+                # else both equal and non-zero: ambiguous, leave as None
+
+        return start_hand, end_hand, is_crossover, dominant_hand, cycle_hand
 
     def _switch_time_norm(
         self,
@@ -240,7 +277,7 @@ class CycleMetrics:
             controlled_time_ratio,
         ) = self._contact_time_fractions(frames)
 
-        start_hand, end_hand, is_crossover, dominant_hand = self._hand_fields(
+        start_hand, end_hand, is_crossover, dominant_hand, cycle_hand = self._hand_fields(
             contact_events,
             contact_time_fraction_left,
             contact_time_fraction_right,
@@ -276,6 +313,7 @@ class CycleMetrics:
             end_hand=end_hand,
             is_crossover=is_crossover,
             dominant_hand=dominant_hand,
+            cycle_hand=cycle_hand,
             switch_time_norm=switch_time_norm,
             control_deviation_overall=control_deviation_overall,
             control_deviation_in_control=control_deviation_in_control,

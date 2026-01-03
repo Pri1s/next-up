@@ -21,6 +21,7 @@ class BallTracker:
         """Initializes the BallTracker."""
         self.tracker: Optional[cv2.legacy.Tracker] = None
         self.tracking_active: bool = False
+        self.last_bbox: Optional[tuple[int, int, int, int]] = None
     
     def initialize(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> None:
         """
@@ -33,6 +34,7 @@ class BallTracker:
         self.tracker = cv2.legacy.TrackerCSRT_create()
         self.tracker.init(frame, bbox)
         self.tracking_active = True
+        self.last_bbox = bbox
     
     def update(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         """
@@ -50,15 +52,18 @@ class BallTracker:
         success, bbox = self.tracker.update(frame)
         if success:
             x, y, w, h = [int(v) for v in bbox]
-            return (x, y, w, h)
+            self.last_bbox = (x, y, w, h)
+            return self.last_bbox
         
         self.tracking_active = False
+        self.last_bbox = None
         return None
     
     def reset(self) -> None:
         """Resets the tracker state."""
         self.tracker = None
         self.tracking_active = False
+        self.last_bbox = None
     
     def is_active(self) -> bool:
         """
